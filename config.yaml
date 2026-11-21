@@ -1,0 +1,174 @@
+# ============================================================
+# 每日世界要闻简报 · 配置文件
+# 所有 ${XXX} 会在运行时从环境变量读取（GitHub Actions 里用 Secrets）
+# ============================================================
+
+timezone: Asia/Shanghai
+
+# 数据来源：
+#   rss             自己抓 RSS + 用 DeepSeek 打分排序、写中文摘要与解读（默认，需要 DEEPSEEK_API_KEY）
+#   newsminimalist  直接搬运 News Minimalist 已经排好序的英文稿件（备用，不需要 API key）
+source: rss
+
+# News Minimalist 通道
+nm:
+  # 只要这个分数以上的（站点自己的分档就是 5.0 / 5.5 / 6.0 三档）
+  min_score: 5.0
+  # 每天最多推送几条（按分数从高到低截断）
+  max_items: 15
+  # significance | coverage | latest，站点自带的排序方式
+  sort: significance
+  # 是否进入每条新闻的文章页抓摘要（关掉就只推标题+链接）
+  fetch_summaries: true
+  # 最多扫多少个站点地图分片来定位文章页，扫满还没凑齐就放弃
+  sitemap_shards: 16
+  output_dir: output
+  timeout: 45
+  retries: 3
+  backoff: 4
+  headless: true
+  # Windows 用系统 Edge；GitHub Actions 的 ubuntu 上会自动回退到 bundled chromium
+  channel: msedge
+  # 分档：分数 >= min 进哪一档，用什么颜色
+  tiers:
+    - {name: "最重大", min: 6.0, accent: "#c0392b", note: "今天最该知道的事"}
+    - {name: "重要",   min: 5.5, accent: "#b7791f", note: "值得花两分钟"}
+    - {name: "值得一看", min: 5.0, accent: "#2c5f8a", note: "信息量够"}
+
+# 只看最近多少小时内发布的新闻
+window_hours: 26
+
+# 单个源最多贡献多少条候选，避免快讯类站点刷屏
+per_source_cap: 15
+
+# 跨源同题聚合的相似度阈值（0-1，越大越严格）
+cluster_threshold: 0.45
+
+# 送去 AI 评估的候选上限，也是每天 token 成本的主要控制项
+max_candidates: 100
+
+# 最终推送的条数上限
+max_items: 15
+
+# 国内新闻保底：即使分数排在后面，也至少留几条中文源的新闻
+balance:
+  zh_min: 6
+
+fetch:
+  timeout: 20
+  workers: 10
+  # 没有发布时间的条目默认丢弃（有些源的时间戳不可信）
+  allow_undated: false
+  max_entries: 60
+
+# 重要性分档：AI 打 0-10 分，这里决定分到哪一档、用什么颜色
+tiers:
+  - {name: "重大",     min: 7.0, accent: "#c0392b", note: "改变格局"}
+  - {name: "重要",     min: 5.0, accent: "#b7791f", note: "值得知道"}
+  - {name: "值得一看", min: 3.5, accent: "#2c5f8a", note: "有信息量"}
+
+scoring:
+  batch_size: 60
+  # 对初评得分最高的一批做二次复核，稳住头部排序
+  recalibrate: true
+  recalibrate_top: 25
+
+# 打分后用一次模型调用把"同一件事被不同媒体分别报道"的条目合并
+dedupe:
+  enabled: true
+  top_k: 30
+
+summarising:
+  summary_batch_size: 6
+
+# 正文抽取：RSS 只给标题和导语，入选的十几条再去抓一次正文，摘要才有料可写
+extraction:
+  enabled: true
+  timeout: 15
+  workers: 8
+  # 每条正文送进模型的最大字数（越大越贵，1800 字符左右约够 3-5 段）
+  max_chars: 2600
+
+ai:
+  # DeepSeek 官方模型：deepseek-flash（便宜快）/ deepseek-v4-pro（贵但强）
+  model: deepseek-flash
+  api_base: https://api.deepseek.com
+  api_key: ${DEEPSEEK_API_KEY}
+  # V4 系列默认开启思考模式，思维链按输出计费且很慢；打分/摘要不需要，关掉
+  thinking: disabled
+  temperature: 0.3
+  max_tokens: 8000
+  timeout: 180
+  retries: 3
+  json_mode: true
+
+delivery:
+  email:
+    enabled: true
+    smtp_host: smtp.qq.com
+    smtp_port: 465
+    username: ${SMTP_USER}
+    password: ${SMTP_PASS}
+    from: ${SMTP_USER}
+    to: yexin693@outlook.com
+    sender_name: 每日要闻
+  bark:
+    enabled: true
+    # 从 Bark App 里复制的那串地址，形如 https://api.day.app/你的KEY
+    url: https://api.day.app/fekrCSJkr5nP8HHjq3TSwe/
+    group: 每日要闻
+    # APNs 单条上限 4KB，超过就拆成多条（同一分组堆叠，只有第一条响铃）
+    max_bytes: 3000
+    # 用 Markdown 排版（标题层级 / 引用块 / 粗体）；若通知里显示成原始 ** 符号，
+    # 说明 Bark 版本偏旧，把它设成 false 就退回纯文本
+    markdown: true
+    sound: bell
+    # 点开推送时跳转的地址，可留空；填了 GitHub Pages 地址更好用
+    link: ""
+
+# ============================================================
+# 数据源：删掉不想要的、加上你要的都可以
+# weight 只用于同题聚合时判断"谁当代表"，不影响打分
+# ============================================================
+feeds:
+  # ---------- 国际 ----------
+  - {id: bbc_world,      name: "BBC World",       url: "https://feeds.bbci.co.uk/news/world/rss.xml",                lang: en, weight: 1.2}
+  - {id: guardian_world, name: "The Guardian",    url: "https://www.theguardian.com/world/rss",                      lang: en, weight: 1.1}
+  - {id: aljazeera,      name: "Al Jazeera",      url: "https://www.aljazeera.com/xml/rss/all.xml",                  lang: en, weight: 1.0}
+  - {id: npr_world,      name: "NPR World",       url: "https://feeds.npr.org/1004/rss.xml",                         lang: en, weight: 1.0}
+  - {id: nyt_world,      name: "NYT World",       url: "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",     lang: en, weight: 1.2}
+  - {id: dw_world,       name: "DW",              url: "https://rss.dw.com/rdf/rss-en-world",                        lang: en, weight: 1.0}
+  - {id: france24,       name: "France 24",       url: "https://www.france24.com/en/rss",                            lang: en, weight: 1.0}
+  - {id: economist,      name: "The Economist",   url: "https://www.economist.com/international/rss.xml",            lang: en, weight: 1.2}
+  - {id: politico,       name: "Politico",        url: "https://www.politico.com/rss/politicopicks.xml",             lang: en, weight: 0.9}
+
+  # ---------- 科技 / 科学 ----------
+  - {id: hn_front,       name: "Hacker News",     url: "https://hnrss.org/frontpage",                                lang: en, weight: 0.7}
+  - {id: arstechnica,    name: "Ars Technica",    url: "https://feeds.arstechnica.com/arstechnica/index",            lang: en, weight: 0.8}
+  - {id: techcrunch,     name: "TechCrunch",      url: "https://techcrunch.com/feed/",                               lang: en, weight: 0.7}
+  - {id: theverge,       name: "The Verge",       url: "https://www.theverge.com/rss/index.xml",                     lang: en, weight: 0.7}
+  - {id: mit_tech,       name: "MIT Tech Review", url: "https://www.technologyreview.com/feed/",                     lang: en, weight: 0.9}
+  - {id: nature_news,    name: "Nature",          url: "https://www.nature.com/nature.rss",                          lang: en, weight: 0.9}
+
+  # ---------- 中文 ----------
+  - {id: china_news,        name: "中新网·要闻",  url: "https://www.chinanews.com.cn/rss/scroll-news.xml",           lang: zh, weight: 1.0}
+  - {id: china_news_cn,     name: "中新网·国内",  url: "https://www.chinanews.com.cn/rss/china.xml",                 lang: zh, weight: 1.0}
+  - {id: china_news_world,  name: "中新网·国际",  url: "https://www.chinanews.com.cn/rss/world.xml",                 lang: zh, weight: 1.0}
+  - {id: china_news_fin,    name: "中新网·财经",  url: "https://www.chinanews.com.cn/rss/finance.xml",               lang: zh, weight: 0.9}
+  - {id: china_news_culture,name: "中新网·文化",  url: "https://www.chinanews.com.cn/rss/culture.xml",               lang: zh, weight: 0.7}
+  - {id: people_world,      name: "人民网·国际",  url: "http://www.people.com.cn/rss/world.xml",                     lang: zh, weight: 1.0}
+  - {id: people_politics,   name: "人民网·时政",  url: "http://www.people.com.cn/rss/politics.xml",                  lang: zh, weight: 1.0}
+  - {id: jiemian,           name: "界面新闻",     url: "https://a.jiemian.com/index.php?m=article&a=rss",            lang: zh, weight: 1.0}
+  - {id: tmtpost,           name: "钛媒体",       url: "https://www.tmtpost.com/rss.xml",                            lang: zh, weight: 0.7}
+  - {id: bbc_zh,            name: "BBC 中文",     url: "https://feeds.bbci.co.uk/zhongwen/simp/rss.xml",             lang: zh, weight: 1.0}
+  - {id: nyt_cn,            name: "纽约时报中文网", url: "https://cn.nytimes.com/rss/",                              lang: zh, weight: 1.0}
+  - {id: dw_zh,             name: "德国之声中文", url: "https://rss.dw.com/rdf/rss-chi-all",                         lang: zh, weight: 1.0}
+  - {id: solidot,           name: "Solidot",      url: "https://www.solidot.org/index.rss",                          lang: zh, weight: 0.6}
+  - {id: ithome,            name: "IT之家",       url: "https://www.ithome.com/rss/",                                lang: zh, weight: 0.6}
+  - {id: ifanr,             name: "爱范儿",       url: "https://www.ifanr.com/feed",                                 lang: zh, weight: 0.6}
+  - {id: qbitai,            name: "量子位",       url: "https://www.qbitai.com/feed",                                lang: zh, weight: 0.6}
+
+  # ---------- 中文聚合（Google News，国内直连不通，GitHub Actions 上正常） ----------
+  - {id: gnews_cn_top,      name: "Google新闻·国内", url: "https://news.google.com/rss/headlines/section/topic/NATION?hl=zh-CN&gl=CN&ceid=CN:zh-Hans", lang: zh, weight: 1.0}
+  - {id: gnews_cn_world,    name: "Google新闻·国际", url: "https://news.google.com/rss/headlines/section/topic/WORLD?hl=zh-CN&gl=CN&ceid=CN:zh-Hans",  lang: zh, weight: 1.0}
+  - {id: gnews_cn_biz,      name: "Google新闻·财经", url: "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=zh-CN&gl=CN&ceid=CN:zh-Hans", lang: zh, weight: 0.9}
