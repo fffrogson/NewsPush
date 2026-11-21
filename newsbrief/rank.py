@@ -54,12 +54,13 @@ SCORE_USER = """当前时间：{now}
 {listing}
 
 请输出 JSON：
-{{"items":[{{"id":1,"score":7.5,"category":"地缘政治","reason":"停火生效，影响千万人"}}]}}
+{{"items":[{{"id":1,"score":7.5,"category":"地缘政治","cn":false,"reason":"停火生效，影响千万人"}}]}}
 
 要求：
 - id 必须是上面列表里的编号，不要漏、不要编。
 - score 为 0-10 的一位小数。
 - category 只能取：{categories}
+- cn：这条新闻是否与中国大陆直接相关（国内政策、经济数据、社会事件、企业司法、民生治理 → true；涉及中国的国际关系、台海博弈、对外摩擦 → false）。
 - reason 不超过 24 字，说明"为什么重要"，不要复述标题。"""
 
 RECAL_SYSTEM = """你是新闻重要性评分器，正在进行一轮"复核"。
@@ -85,7 +86,7 @@ SUMMARY_SYSTEM = """你是中文新闻编辑，负责把中文和外语新闻统
 对每条新闻输出四项：
 - title_zh：中文标题。外国人名、地名、机构名用中文媒体的通行译名，没有通行译名就保留原文；不要逐字直译，要像中文媒体那样写得通顺、能一眼看懂。
 - summary：2 到 3 句事实概括，讲清"谁做了什么、结果如何、关键数字是多少"。原文是外文时，这里是翻译加压缩，不是逐句对译。只写材料里提供了的事实。
-- insight：3 到 4 句解读，不超过 200 字。回答三件事：这件事的背景和前因是什么、它真正改变的是什么（不要复述 summary）、接下来几天值得盯哪个具体信号。有判断，但判断要落在事实上，不要泛泛而谈"影响深远"。
+- insight：3 到 4 句解读，不超过 200 字。回答三件事：这件事的背景和前因是什么、它真正改变的是什么（不要复述 summary）、接下来几天值得盯哪个具体信号。有判断，但判断要落在事实上，不要泛泛而谈"影响深远"。如果这件事和中国有实际关联（贸易、产业链、能源、外交、科技竞争、周边安全），用其中一句点出对中国读者意味着什么；没有关联就不要硬扯，也不要因此写得更长。
 - terms：读者可能看不懂的名词，0 到 3 条。包括：机构缩写（如 OPEC+、ICC）、制度与法律名词（如"授权使用武力""反倾销"）、新技术概念（如"mRNA 疫苗平台"）、不太常见的地缘名词。每条给一句解释，说清它是什么、跟这条新闻什么关系。没有生词就返回空数组，不要硬凑。
 
 硬性要求：
@@ -206,6 +207,7 @@ def score_items(client: ChatClient, items: list[Item], cfg: dict) -> None:
                 return False
             item.score = max(0.0, min(10.0, score))
             item.reason = str(row.get("reason", ""))[:60]
+            item.cn = str(row.get("cn", "")).strip().lower() in ("true", "1", "yes", "y")
             category = str(row.get("category", "")).strip()
             item.category = category if category in CATEGORIES else "其他"
             return True

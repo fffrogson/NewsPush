@@ -200,6 +200,7 @@ def main(argv: list[str] | None = None) -> int:
             log.info("预览模式：跳过 AI 打分与摘要")
             preview_scores(candidates, max_items)
             chosen = candidates[:max_items]
+            extras = []
             overview = ""
             usage_info = None
         else:
@@ -224,9 +225,34 @@ def main(argv: list[str] | None = None) -> int:
             chosen = select(wide, floor, max_items, zh_min)
             log.info("入选 %d 条（阈值 %.1f 分）", len(chosen), floor)
 
-            fill_bodies(chosen, cfg.section("extraction"))
-            summarize_items(client, chosen, cfg.section("summarising"))
+            # A second, smaller tray for domestic Chinese news. Global scoring
+            # almost never puts it in the top 15, but the reader still wants it.
+            extras = []
+            n_extra = int(cfg.get("balance.zh_extra", 0))
+            if n_extra > 0:
+                already_cn = sum(1 for it in chosen if it.cn)
+                skip_if = int(cfg.get("balance.zh_extra_skip_if", 2))
+                if already_cn >= skip_if:
+                    log.info("前 %d 条已含 %d 条国内新闻，不再补充", len(chosen), already_cn)
+                else:
+                    taken = {it.uid for it in chosen}
+                    extra_floor = float(cfg.get("balance.zh_extra_min", 2.0))
+                    pool = [
+                        it
+                        for it in candidates
+                        if it.cn and it.uid not in taken and it.score >= extra_floor
+                    ]
+                    pool.sort(key=lambda it: it.score, reverse=True)
+                    extras = pool[:n_extra]
+                    log.info(
+                        "国内要闻补充 %d 条（前 %d 条已有 %d 条国内）",
+                        len(extras), len(chosen), already_cn,
+                    )
+
+            fill_bodies(chosen + extras, cfg.section("extraction"))
+            summarize_items(client, chosen + extras, cfg.section("summarising"))
             drop_echo_summaries(chosen)
+            drop_echo_summaries(extras)
             overview = make_overview(client, chosen)
             usage = client.usage_summary()
             usage_info = usage
@@ -240,6 +266,13 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     grouped = group_by_tier(chosen, tiers)
+    if extras:
+        grouped = grouped + [
+            (
+                {"name": "国内要闻", "min": -1.0, "accent": "#7b4b8a", "note": ""},
+                extras,
+            )
+        ]
 
     stats_dict = {
         "feeds_ok": feeds_ok,
@@ -249,8 +282,8 @@ def main(argv: list[str] | None = None) -> int:
     html_out = render_html(moment=now, overview=overview, grouped=grouped, stats=stats_dict)
     text_out = render_text(moment=now, overview=overview, grouped=grouped, stats=stats_dict)
     bark_max = int(cfg.get("delivery.bark.max_bytes", 3400))
-    # One notification is the default: a stacked pile of 6 pushes reads in reverse
-    # order on the lock screen, which makes the ranking look scrambled.
+    # split=true keeps every story fully detailed; the parts are sent tail-first
+    # so the lock screen reads 1→N from the top down.
     if cfg.get("delivery.bark.split", False):
         bark_parts = render_bark_parts(moment=now, overview=overview, grouped=grouped, max_bytes=bark_max)
     else:
@@ -268,27 +301,29 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         import json as _json
 
+        def _dump(it: Item) -> dict:
+            return {
+                "score": it.score,
+                "title_zh": it.title_zh,
+                "title": it.title,
+                "summary": it.summary,
+                "insight": it.insight,
+                "terms": it.terms,
+                "category": it.category,
+                "reason": it.reason,
+                "cn": it.cn,
+                "source": it.source_name,
+                "url": it.url,
+                "lang": it.lang,
+                "published": it.published.isoformat(),
+            }
+
         payload = {
             "generated_at": now.isoformat(),
             "overview": overview,
             "usage": usage_info,
-            "items": [
-                {
-                    "score": it.score,
-                    "title_zh": it.title_zh,
-                    "title": it.title,
-                    "summary": it.summary,
-                    "insight": it.insight,
-                    "terms": it.terms,
-                    "category": it.category,
-                    "reason": it.reason,
-                    "source": it.source_name,
-                    "url": it.url,
-                    "lang": it.lang,
-                    "published": it.published.isoformat(),
-                }
-                for it in chosen
-            ],
+            "items": [_dump(it) for it in chosen],
+            "extras": [_dump(it) for it in extras],
         }
         json_path = out_dir / f"brief-{stamp}.json"
         json_path.write_text(_json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -299,7 +334,9 @@ def main(argv: list[str] | None = None) -> int:
         print("\n" + text_out[:1500])
         return 0
 
-    subject = f"今日要闻 · {now.strftime('%m-%d')} · {len(chosen)} 条"
+    subject = f"今日要闻 · {now.strftime('%m-%d')} · {len(chosen) + len(extras)} 条"
+    if extras:
+        subject += f"（含国内 {len(extras)} 条）"
     failures: list[str] = []
     attempted = 0
 

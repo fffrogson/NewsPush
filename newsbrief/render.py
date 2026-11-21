@@ -489,7 +489,6 @@ def render_bark_digest(
     silently dropped.
     """
     items: list[Item] = [it for _, group in grouped for it in group]
-    items.sort(key=lambda it: it.score, reverse=True)
     total = len(items)
 
     if not items:

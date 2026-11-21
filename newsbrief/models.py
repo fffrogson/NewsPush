@@ -27,6 +27,7 @@ class Item:
     score: float = 0.0
     category: str = ""
     reason: str = ""
+    cn: bool = False
     body: str = ""
     title_zh: str = ""
     summary: str = ""
