@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -319,17 +320,26 @@ def main(argv: list[str] | None = None) -> int:
         try:
             parts = bark_parts
             use_md = bool(cfg.get("delivery.bark.markdown", True))
-            for idx, (part_title, part_md, part_plain) in enumerate(parts):
-                # Only the first notification rings; the rest land quietly in
-                # the same group so the lock screen stays readable.
+            interval = float(cfg.get("delivery.bark.interval", 8) or 0)
+            # iOS shows the newest notification on top. To make the lock screen read
+            # 1→15 from top to bottom, the LAST push must be the one holding item 1,
+            # so we send the tail first and wait a beat between pushes.
+            order = list(range(len(parts)))
+            if bool(cfg.get("delivery.bark.reverse", True)):
+                order.reverse()
+            for pos, idx in enumerate(order):
+                part_title, part_md, part_plain = parts[idx]
+                final = pos == len(order) - 1
                 send_bark(
                     bark_cfg,
                     title=part_title,
                     body=part_plain,
                     markdown=part_md if use_md else None,
-                    sound=None if idx == 0 else "none",
-                    level=None if idx == 0 else "passive",
+                    sound=None if final else "none",
+                    level=None if final else "passive",
                 )
+                if not final and interval:
+                    time.sleep(interval)
             log.info("Bark 已推送 %d 条", len(parts))
         except Exception as exc:  # noqa: BLE001
             log.error("Bark 推送失败: %s", exc)
