@@ -57,8 +57,8 @@ python -m newsbrief --resend output\brief-2026-11-21.json
 ## 部署到 GitHub Actions
 
 1. 新建仓库，把目录推上去。
-2. **Settings → Secrets and variables → Actions** 加四个 secret：
-   `DEEPSEEK_API_KEY`、`SMTP_USER`、`SMTP_PASS`、`BARK_URL`。
+2. **Settings → Secrets and variables → Actions** 加五个 secret：
+   `DEEPSEEK_API_KEY`、`SMTP_USER`、`SMTP_PASS`、`MAIL_TO`、`BARK_URL`。
    （QQ 邮箱的 `SMTP_PASS` 是 **16 位授权码**：设置 → 账户 → 开启 SMTP → 生成授权码。
    Outlook 邮箱先开两步验证，再用"应用密码"当 `SMTP_PASS`，`smtp_host: smtp-mail.outlook.com`、`smtp_port: 587`。）
 3. **Actions** 里手动跑一次（勾 `dry_run`），确认产物没问题。
