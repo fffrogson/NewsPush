@@ -76,8 +76,13 @@ def _orig_line(item: Item) -> str:
     return ""
 
 
+def _trim_explain(text: str) -> str:
+    """Drop the trailing full stop so '；'.join() does not produce '。；'."""
+    return text.strip().rstrip("。．.，,；;")
+
+
 def _terms_plain(item: Item) -> str:
-    parts = [f"{t['term']}（{t['explain']}）" for t in item.terms if t.get("term")]
+    parts = [f"{t['term']}（{_trim_explain(t['explain'])}）" for t in item.terms if t.get("term")]
     return "；".join(parts)
 
 
@@ -86,7 +91,7 @@ def _terms_html(item: Item) -> str:
         return ""
     rows = "；".join(
         f'<span style="color:#4a4a4a;">{_e(t["term"])}</span>'
-        f'<span style="color:#8a8a8a;">（{_e(t["explain"])}）</span>'
+        f'<span style="color:#8a8a8a;">（{_e(_trim_explain(t["explain"]))}）</span>'
         for t in item.terms
         if t.get("term")
     )
@@ -414,7 +419,10 @@ def _bark_block_md(item: Item, index: int) -> str:
         lines.append(f"> **解读** {_md_escape(item.insight)}")
         lines.append("")
     if item.terms:
-        terms = "；".join(f"**{_md_escape(t.get('term', ''))}** {_md_escape(t.get('explain', ''))}" for t in item.terms)
+        terms = "；".join(
+            f"**{_md_escape(t.get('term', ''))}** {_md_escape(_trim_explain(t.get('explain', '')))}"
+            for t in item.terms
+        )
         lines.append(f"**名词**　{terms}")
         lines.append("")
     lines.append(f"[读原文 →]({item.url})")

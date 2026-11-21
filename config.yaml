@@ -118,7 +118,7 @@ delivery:
     url: https://api.day.app/fekrCSJkr5nP8HHjq3TSwe/
     group: 每日要闻
     # APNs 单条上限 4KB，超过就拆成多条（同一分组堆叠，只有第一条响铃）
-    max_bytes: 3000
+    max_bytes: 3400
     # 用 Markdown 排版（标题层级 / 引用块 / 粗体）；若通知里显示成原始 ** 符号，
     # 说明 Bark 版本偏旧，把它设成 false 就退回纯文本
     markdown: true
