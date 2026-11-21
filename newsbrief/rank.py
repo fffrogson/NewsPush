@@ -263,11 +263,19 @@ def summarize_items(client: ChatClient, items: list[Item], cfg: dict) -> None:
         return
     batch_size = int(cfg.get("summary_batch_size", 6))
 
-    def run(batch: list[Item]) -> None:
+    def run(batch: list[Item], lean: bool = False) -> None:
         id_map = {i + 1: it for i, it in enumerate(batch)}
         rows = []
         for idx, it in id_map.items():
-            if it.body:
+            if lean:
+                # Content safety rejections (HTTP 400 Content Exists Risk) are
+                # triggered by the source text itself, so retry on the leanest
+                # possible material: title plus a short lead, no body at all.
+                rows.append(
+                    f"[{idx}] 来源：{it.source_name}｜标题：{it.title}｜导语：{it.lead[:120]}"
+                    f"｜正文：（略）"
+                )
+            elif it.body:
                 rows.append(
                     f"[{idx}] 来源：{it.source_name}｜标题：{it.title}｜导语：{it.lead[:220]}"
                     f"｜正文：{it.body[:1800]}"
@@ -286,8 +294,11 @@ def summarize_items(client: ChatClient, items: list[Item], cfg: dict) -> None:
             if len(batch) > 1:
                 log.warning("  摘要失败（%d 条），拆半重试: %s", len(batch), exc)
                 mid = len(batch) // 2
-                run(batch[:mid])
-                run(batch[mid:])
+                run(batch[:mid], lean)
+                run(batch[mid:], lean)
+            elif not lean:
+                log.warning("  摘要失败（单条），去掉正文重试: %s", exc)
+                run(batch, lean=True)
             else:
                 log.error("  摘要失败（单条），跳过: %s", exc)
             return
