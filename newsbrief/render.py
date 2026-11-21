@@ -135,7 +135,8 @@ def render_html(
                 f'<p style="margin:11px 0 0;font-size:15px;line-height:1.78;color:#333;">'
                 f"{_e(item.summary)}</p>"
                 if item.summary
-                else ""
+                else '<p style="margin:11px 0 0;font-size:13px;color:#9a9a9a;">'
+                "（这条没能生成摘要，点标题看原文）</p>"
             )
             reason_html = (
                 f'<div style="margin-top:8px;font-size:13px;color:#8a8a8a;">'
