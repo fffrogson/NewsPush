@@ -28,6 +28,7 @@ from .rank import (
 )
 from .render import (
     group_by_tier,
+    render_bark_digest,
     render_bark_parts,
     render_html,
     render_text,
@@ -246,12 +247,13 @@ def main(argv: list[str] | None = None) -> int:
     }
     html_out = render_html(moment=now, overview=overview, grouped=grouped, stats=stats_dict)
     text_out = render_text(moment=now, overview=overview, grouped=grouped, stats=stats_dict)
-    bark_parts = render_bark_parts(
-        moment=now,
-        overview=overview,
-        grouped=grouped,
-        max_bytes=int(cfg.get("delivery.bark.max_bytes", 3000)),
-    )
+    bark_max = int(cfg.get("delivery.bark.max_bytes", 3400))
+    # One notification is the default: a stacked pile of 6 pushes reads in reverse
+    # order on the lock screen, which makes the ranking look scrambled.
+    if cfg.get("delivery.bark.split", False):
+        bark_parts = render_bark_parts(moment=now, overview=overview, grouped=grouped, max_bytes=bark_max)
+    else:
+        bark_parts = [render_bark_digest(moment=now, overview=overview, grouped=grouped, max_bytes=bark_max)]
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)

@@ -429,6 +429,22 @@ def _bark_block_md(item: Item, index: int) -> str:
     return "\n".join(lines).rstrip()
 
 
+def _bark_block_med(item: Item, index: int) -> str:
+    """Mid-tier block: headline, meta, first sentence of the summary, link."""
+    score = f"{item.score:.1f}"
+    meta = f"`{score}` · {item.source_name}"
+    first = (item.summary or "").strip()
+    if len(first) > 120:
+        cut = max(first.rfind(ch, 0, 120) for ch in "。！？")
+        first = first[: cut + 1] if cut > 40 else first[:120] + "…"
+    lines = [f"### {index}. {_md_escape(item.display_title)}", meta, ""]
+    if first:
+        lines.append(_md_escape(first))
+        lines.append("")
+    lines.append(f"[读原文 →]({item.url})")
+    return "\n".join(lines).rstrip()
+
+
 def _bark_block(item: Item, index: int) -> str:
     """Plain-text fallback for Bark clients that do not render markdown."""
     head = f"{index}. {item.display_title}（{item.score:.1f} · {item.source_name}）"
@@ -441,6 +457,98 @@ def _bark_block(item: Item, index: int) -> str:
         lines.append(f"名词：{_terms_plain(item)}")
     lines.append(f"原文：{item.url}")
     return "\n".join(lines)
+
+
+def _md_to_plain(md: str) -> str:
+    """Rough markdown → plain text, for Bark clients without markdown support."""
+    out = re.sub(r"^###\s*", "", md, flags=re.M)
+    out = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1：\2", out)
+    out = out.replace("**", "").replace("`", "")
+    out = re.sub(r"^>\s*", "", out, flags=re.M)
+    out = re.sub(r"^---\s*$", "—" * 12, out, flags=re.M)
+    return out
+
+
+def _bark_compact(item: Item, index: int) -> str:
+    return f"{index}. {_md_escape(item.display_title)} `{item.score:.1f}`"
+
+
+def render_bark_digest(
+    *,
+    moment: datetime,
+    overview: str,
+    grouped: list[tuple[dict, list[Item]]],
+    max_bytes: int = 3400,
+) -> tuple[str, str, str]:
+    """One notification, importance-ordered, that fits Bark's 4KB payload.
+
+    Every story keeps a numbered line so the reader sees the full ranking, and
+    the budget left over is spent upgrading the top stories from a headline to
+    a full block (summary + insight + terms + link). If the ranking alone does
+    not fit, the tail is folded into a "另有 N 条见邮件" line instead of being
+    silently dropped.
+    """
+    items: list[Item] = [it for _, group in grouped for it in group]
+    items.sort(key=lambda it: it.score, reverse=True)
+    total = len(items)
+
+    if not items:
+        title = f"今日要闻 · {moment.strftime('%m-%d')}"
+        body = "今天没有达到质量线的新闻。"
+        return title, body, body
+
+    head = f"**今日要览**\n\n{_md_escape(overview)}" if overview else ""
+    used = len(head.encode("utf-8")) + 8 if head else 0
+    budget = max_bytes - used
+
+    # 1) Reserve one compact line per story so the ranking is never truncated.
+    compact: list[str] = [_bark_compact(it, i) for i, it in enumerate(items, 1)]
+    compact_cost = sum(len(c.encode("utf-8")) + 6 for c in compact)
+
+    kept = total
+    while kept > 1 and compact_cost > budget:
+        kept -= 1
+        compact_cost -= len(compact[kept].encode("utf-8")) + 6
+
+    budget_left = budget - compact_cost
+
+    # 2) Spend what is left upgrading from the most important story downwards.
+    blocks: list[str] = []
+    upgraded = 0
+    for i, item in enumerate(items[:kept], 1):
+        base = len(compact[i - 1].encode("utf-8")) + 6
+        full = _bark_block_md(item, i)
+        delta_full = len(full.encode("utf-8")) - base
+        if delta_full <= budget_left:
+            blocks.append(full)
+            budget_left -= delta_full
+            upgraded = i
+            continue
+        # Second pass: a lighter block (headline + one-line summary + link) is
+        # worth more to the reader than another bare headline.
+        med = _bark_block_med(item, i)
+        delta_med = len(med.encode("utf-8")) - base
+        if delta_med <= budget_left:
+            blocks.append(med)
+            budget_left -= delta_med
+            upgraded = i
+            continue
+        break
+
+    body_parts: list[str] = []
+    if head:
+        body_parts.append(head)
+    if upgraded:
+        body_parts.append("\n\n---\n\n".join(blocks))
+    rest = [compact[i] for i in range(upgraded, kept)]
+    if rest:
+        body_parts.append("**其余要闻**\n\n" + "\n".join(rest))
+    if kept < total:
+        body_parts.append(f"另有 {total - kept} 条见邮件完整版")
+
+    md = "\n\n---\n\n".join(p for p in body_parts if p)
+    title = f"今日要闻 · {moment.strftime('%m-%d')} · {total} 条"
+    return title, md, _md_to_plain(md)
 
 
 def render_bark_parts(
