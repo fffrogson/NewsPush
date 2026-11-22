@@ -1,0 +1,42 @@
+name: healthcheck
+
+# 每天 09:13（北京）检查一次：今天的定时简报到底有没有成功跑过。
+# 定时任务失败是"静默"的——不会有人发邮件告诉你，所以专门派一个哨兵。
+# 哨兵本身如果也没跑，那说明整个 Actions 调度都停了，得人工去页面看一眼。
+
+on:
+  schedule:
+    - cron: "13 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Did today's brief run?
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BARK_URL: ${{ secrets.BARK_URL }}
+        run: |
+          set -euo pipefail
+          since=$(date -u -d '30 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          ok=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/daily.yml/runs?event=schedule&per_page=20" \
+               --jq "[.workflow_runs[] | select(.conclusion == \"success\" and .created_at > \"$since\")] | length")
+          echo "近 30 小时成功的定时运行：$ok 次"
+          if [ "$ok" -gt 0 ]; then
+            echo "今天没问题。"
+            exit 0
+          fi
+
+          echo "没有成功的定时运行，发告警。"
+          key="${BARK_URL%/}"
+          key="${key##*/}"
+          curl -sS -X POST "${BARK_URL%/}/push" \
+            -H 'Content-Type: application/json' \
+            -d "{\"device_key\":\"${key}\",\"title\":\"今天的简报没生成\",\"body\":\"近 30 小时没有成功的定时运行，去 Actions 页面看看。\",\"group\":\"运维告警\",\"level\":\"timeSensitive\",\"url\":\"https://github.com/${GITHUB_REPOSITORY}/actions\"}"

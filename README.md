@@ -62,13 +62,34 @@ python -m newsbrief --resend output\brief-2026-11-21.json
    （QQ 邮箱的 `SMTP_PASS` 是 **16 位授权码**：设置 → 账户 → 开启 SMTP → 生成授权码。
    Outlook 邮箱先开两步验证，再用"应用密码"当 `SMTP_PASS`，`smtp_host: smtp-mail.outlook.com`、`smtp_port: 587`。）
 3. **Actions** 里手动跑一次（勾 `dry_run`），确认产物没问题。
-4. 之后每天 UTC 23:00（北京 07:00）自动跑，产物（HTML/TXT/JSON）作为 artifact 保留 14 天。
+4. 之后每天 UTC 23:03（北京 07:03）自动跑，产物（HTML/TXT/JSON）作为 artifact 保留 14 天。
 
-两个必须知道的坑：
+三个必须知道的坑：
 
 - **cron 用 UTC**，且 GitHub 的定时触发**常延迟 5–30 分钟**。要卡准 07:00，用一台常开的机器
   （小主机 / VPS / 路由器）跑 crontab，或云函数定时触发器。
+- **别把定时排在整点**。GitHub 文档写明"高负载时段包括每个小时的开始"，整点排队的定时任务
+  有概率被**直接丢弃**——不是晚几分钟，是连一条运行记录都不留下。所以这里用的是
+  `3 23` 和 `33 23` 两个点：第二个只在第一个没成功时才真的干活（见 workflow 里的
+  `Already delivered today?` 步骤）。
 - **公开仓库连续 60 天没有提交活动**，GitHub 会停掉定时任务，记得偶尔提交一次。
+
+### 某天没收到简报怎么办
+
+定时任务失败是**静默**的：不会有人发邮件告诉你。所以配了 `healthcheck.yml` 当哨兵——
+每天北京 09:13 检查"最近 30 小时有没有成功的定时运行"，没有就用 Bark 推一条
+「今天的简报没生成」。收到这条告警就去 [Actions](https://github.com/fffrogson/NewsPush/actions)
+看那天的日志。
+
+排查顺序：
+
+1. Actions 页面有没有那天的运行记录？
+   - **完全没有** → 是调度没触发（整点丢任务 / workflow 被停用）。点一次 Run workflow 先拿到当天的简报，
+     然后去 Settings → Actions 确认工作流没有被 disabled。
+   - **有但失败** → 看失败那步的日志，常见是 key 过期、SMTP 授权码失效。
+2. 只有 Bark 没收到、邮件正常 → 检查 `BARK_URL` 里的 key 是否还有效。
+3. 邮件进了垃圾箱 → 见下面「为什么邮件会被判垃圾」。
+
 
 BBC、Guardian、NYT、DW、Al Jazeera 这些源在国内直连不通，在 GitHub Actions（境外机房）上正常；
 本地跑会看到它们失败，属正常。
