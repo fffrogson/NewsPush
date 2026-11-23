@@ -62,43 +62,41 @@ python -m newsbrief --resend output\brief-2026-11-21.json
    （QQ 邮箱的 `SMTP_PASS` 是 **16 位授权码**：设置 → 账户 → 开启 SMTP → 生成授权码。
    Outlook 邮箱先开两步验证，再用"应用密码"当 `SMTP_PASS`，`smtp_host: smtp-mail.outlook.com`、`smtp_port: 587`。）
 3. **Actions** 里手动跑一次（勾 `dry_run`），确认产物没问题。
-4. 之后每天北京 07:07 起，按 `7 23` → `37 23` → `7 0`（UTC）三个点依次尝试，
-   第一个跑成功就投递，后面两个直接被 `Already delivered today?` 跳过。
+4. 之后每天 07:00 由 **iPhone 快捷指令**触发（见下一节），跑一次投递一次。
    产物（HTML/TXT/JSON）作为 artifact 保留 14 天。
 
-三个必须知道的坑：
+为什么不挂 GitHub 自己的 `schedule` cron：
 
-- **cron 用 UTC**，且 GitHub 的定时触发**不守时**。实测过：排期 01:13 UTC 的任务，
-  实际 07:59 UTC 才跑（晚了 **6 小时 46 分**）；排期 23:33 UTC 的任务，
-  次日 03:29 UTC 才跑（晚了 **3 小时 56 分**）。也就是说这套调度根本卡不准 07:00，
-  只能当兜底。真正的准点投递靠下面两种外部触发。
-- **别把定时排在整点**。GitHub 文档写明"高负载时段包括每个小时的开始"，整点排队的定时
-  任务有概率被直接丢弃，连一条运行记录都不留。
-- **公开仓库连续 60 天没有提交活动**，GitHub 会停掉定时任务，记得偶尔提交一次。
-  （私有仓库不受这条限制，代价是走每月 2,000 分钟的额度；单次约 2.2 分钟，
-  跑满 30 天约 70 分钟，占 3.5%。）
+- **它不守时**。实测：排期 01:13 UTC 的任务，实际 07:59 UTC 才跑（晚了 **6 小时 46 分**）；
+  排期 23:33 UTC 的任务，次日 03:29 UTC 才跑（晚了 **3 小时 56 分**）。
+- **它会丢任务**。`23:03` / `23:33` 两个点连续两天跑出 **0 条记录**——不是晚点，
+  是排队时被直接丢弃，连运行记录都不留。GitHub 文档原话：
+  *"High load times include the start of every hour. If the load is sufficiently high enough,
+  some queued jobs may be dropped."*
+- 所以现在只保留 `workflow_dispatch`（手机/手动）和 `repository_dispatch`（外部工具）两种入口，
+  每天几点发完全由你决定。
 
-### 外部定时器：让投递时间真的准
+### 触发方式一：iPhone 快捷指令（推荐）
 
-GitHub 自己的 cron 会晚几个小时，所以真正的 07:00 交给外部触发。
-工作流已经声明了 `on.repository_dispatch.types: [daily]`，任何能在 07:00 POST 一次的工具都行。
-它和 schedule 共用同一个"今天投递过没有"的判断，所以两条路都开着也不会重复发。
+「快捷指令 → 自动化 → 个人自动化 → 特定时间 → 07:00 → 每天」，
+关掉「运行前询问」选「立即运行」，然后加一个 GitHub 的**调度工作流程**动作：
 
-**方式一：本机 Windows 计划任务**（已配置好，无需再操作）
+| 字段 | 值 |
+|---|---|
+| Account | 你的 GitHub 账号 |
+| Owner | `fffrogson` |
+| Repository | `NewsPush` |
+| Workflow ID | `daily.yml` |
+| Branch / ref | `main` |
+| Inputs | 留空 |
 
-`tools/trigger.ps1` 会查 `api.github.com` 的真实 IP、用 `curl --resolve` 绕开本机 hosts
-的劫持，然后 POST 一次 `repository_dispatch`。日志在 `output/trigger.log`。
+这个动作走的是 `workflow_dispatch` 接口。想干跑一次就在 Inputs 里加
+`dry_run` = `true`；想无视"今天已经发过"再发一次就加 `force` = `true`。
 
-```
-schtasks /Query /TN "NewsPushDailyTrigger"     # 看状态
-schtasks /Run   /TN "NewsPushDailyTrigger"     # 立刻手动踢一次
-schtasks /Delete /TN "NewsPushDailyTrigger" /F # 不想要了就删掉
-```
+### 触发方式二：任意 HTTP 客户端（cron-job.org / Cloudflare Worker 等）
 
-注意它是 **Interactive only**：电脑没开、或没登录，这一步不会执行——那种情况就退回到
-GitHub 的定时兜底（可能晚几个小时才到）。
-
-**方式二：cron-job.org（免费，24×7，不依赖本机开机）**
+工作流同时声明了 `on.repository_dispatch.types: [daily]`，任何能在 07:00 POST 一次的工具都行。
+它和快捷指令共用同一个"北京自然日只投递一次"的判断，所以两条路同时开着也不会重复发。
 
 1. 建一个 job，URL 填
    `https://api.github.com/repos/fffrogson/NewsPush/dispatches`
@@ -111,18 +109,22 @@ GitHub 的定时兜底（可能晚几个小时才到）。
 想先干跑（只生成不发送）就把 body 换成
 `{"event_type":"daily","client_payload":{"dry_run":true}}`。
 
+> **注意**：本机 Windows 计划任务（`NewsPushDailyTrigger`）已经删掉了——
+> 早上电脑通常不开机，留着只会造成"到底是谁触发的"混乱。
+> 需要时用 `tools/trigger.ps1` 手动踢一次即可。
+
 ### 某天没收到简报怎么办
 
 定时任务失败是**静默**的：不会有人发邮件告诉你。所以配了 `healthcheck.yml` 当哨兵——
 每天北京 09:13 回看 30 小时，如果找不到一次"真的把 `Build the brief` 跑完"的
-定时/外部触发运行，就用 Bark 推一条「今天的简报没生成」。
+运行，就用 Bark 推一条「今天的简报没生成」。
 （只数"运行成功"不够：被 guard 跳过的那次也是 success，所以它还要再看那次的步骤。）
 收到告警就去 [Actions](https://github.com/fffrogson/NewsPush/actions) 看当天的日志。
 
 排查顺序：
 
 1. Actions 页面有没有那天的运行记录？
-   - **完全没有** → 两种触发都没生效。先看 `output/trigger.log` 有没有 07:00 那条 204；
+   - **完全没有** → 快捷指令/外部触发都没踢成功。先手动跑一次快捷指令看返回码；
      再去 Settings → Actions 确认工作流没被 disabled。
    - **有但被跳过** → guard 认为今天已经投递过，翻前一条运行看是不是已经发过了。
    - **有但失败** → 看失败那步的日志，常见是 key 过期、SMTP 授权码失效。

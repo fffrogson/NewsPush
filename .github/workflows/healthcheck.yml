@@ -28,7 +28,7 @@ jobs:
           set -euo pipefail
           since=$(date -u -d '30 hours ago' +%Y-%m-%dT%H:%M:%SZ)
           run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/daily.yml/runs?per_page=40" \
-            --jq "[.workflow_runs[] | select((.event == \"schedule\" or .event == \"repository_dispatch\") and .conclusion == \"success\" and .created_at > \"$since\")] | sort_by(.created_at) | last | .id // empty")
+            --jq "[.workflow_runs[] | select((.event == \"schedule\" or .event == \"repository_dispatch\" or .event == \"workflow_dispatch\") and .conclusion == \"success\" and .created_at > \"$since\")] | sort_by(.created_at) | last | .id // empty")
 
           built=0
           if [ -n "$run_id" ]; then
@@ -36,7 +36,7 @@ jobs:
               --jq "[.jobs[].steps[] | select(.name == \"Build the brief\" and .conclusion == \"success\")] | length")
             echo "最近一次成功运行：$run_id，其中构建成功 $built 次"
           else
-            echo "近 30 小时没有任何定时/外部触发的成功运行"
+            echo "近 30 小时没有任何成功运行"
           fi
 
           if [ "$built" -gt 0 ]; then

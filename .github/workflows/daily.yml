@@ -1,15 +1,10 @@
 name: daily-brief
 
 on:
-  # 三个时间点，全部避开整点：GitHub 文档写明"高负载时段包括每个小时的开始"，
-  # 整点排队的定时任务有概率被直接丢弃（不留任何运行记录）。
-  # 北京 07:07 / 07:37 / 08:07。第一个成功投递后，后面两个会被 guard 跳过。
-  schedule:
-    - cron: "7 23 * * *"
-    - cron: "37 23 * * *"
-    - cron: "7 0 * * *"
-  # 外部定时器（cron-job.org / Cloudflare Worker 等）用这个事件踢一下，
-  # 比 GitHub 自己的调度靠谱。详见 README「外部定时器」一节。
+  # 不再用 GitHub 自己的 cron：实测它会把 23:33 UTC 的任务拖到次日 03:29 UTC 才跑
+  # （晚 3 小时 56 分），甚至整点排队的任务直接丢弃、连运行记录都不留。
+  # 现在由 iPhone 快捷指令每天 07:00 触发 workflow_dispatch，
+  # 或由任意外部工具 POST repository_dispatch（见 README「外部定时器」）。
   repository_dispatch:
     types: [daily]
   workflow_dispatch:
@@ -24,6 +19,10 @@ on:
         default: false
       debug:
         description: "打印详细日志"
+        type: boolean
+        default: false
+      force:
+        description: "今天已经发过了也要再发一次"
         type: boolean
         default: false
 
@@ -41,15 +40,15 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      # 定时触发（schedule）和外部触发（repository_dispatch）都要先看今天投递过没有，
-      # 避免重复发邮件、重复推送。手动触发不受限制，永远照常执行。
+      # 同一天只投递一次：快捷指令手滑点两下、或者外部定时器和快捷指令撞车，
+      # 都不会重复发邮件 / 重复推 Bark。想强行再发一次就勾 force。
       #
       # 窗口按"北京时间的自然日"算，不是按"最近 N 小时"：
-      # 07:00 的投递在 UTC 是前一天 23:00，用 20 小时窗口会把今天上午那次
+      # 07:00 的投递在 UTC 是前一天 23:00，用小时窗口会把今天上午那次
       # 晚到的投递算进来，导致第二天早上被误判成"已经发过了"。
       - name: Already delivered today?
         id: guard
-        if: github.event_name == 'schedule' || github.event_name == 'repository_dispatch'
+        if: github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && inputs.force != true)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -62,7 +61,7 @@ jobs:
           since=$(date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ)
           echo "北京日期 $local_day，窗口起点 $since"
           n=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/daily.yml/runs?per_page=40" \
-              --jq "[.workflow_runs[] | select((.event == \"schedule\" or .event == \"repository_dispatch\") and .conclusion == \"success\" and .created_at >= \"$since\")] | length")
+              --jq "[.workflow_runs[] | select((.event == \"schedule\" or .event == \"repository_dispatch\" or .event == \"workflow_dispatch\") and .conclusion == \"success\" and .created_at >= \"$since\")] | length")
           echo "今天已成功投递：$n 次"
           if [ "$n" -gt 0 ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
