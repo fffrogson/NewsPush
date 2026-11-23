@@ -1,8 +1,9 @@
 name: healthcheck
 
-# 每天 09:13（北京）检查一次：今天的定时简报到底有没有成功跑过。
-# 定时任务失败是"静默"的——不会有人发邮件告诉你，所以专门派一个哨兵。
-# 哨兵本身如果也没跑，那说明整个 Actions 调度都停了，得人工去页面看一眼。
+# 每天 09:13（北京）检查一次：今天的简报到底有没有真的生成。
+# 简报失败是"静默"的——不会有人发邮件告诉你，所以专门派一个哨兵。
+# 注意：只看"有没有成功的运行"不够——guard 跳过的那次运行也是 success，
+# 所以这里要确认那次运行的 "Build the brief" 步骤真的跑完了。
 
 on:
   schedule:
@@ -26,17 +27,26 @@ jobs:
         run: |
           set -euo pipefail
           since=$(date -u -d '30 hours ago' +%Y-%m-%dT%H:%M:%SZ)
-          ok=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/daily.yml/runs?event=schedule&per_page=20" \
-               --jq "[.workflow_runs[] | select(.conclusion == \"success\" and .created_at > \"$since\")] | length")
-          echo "近 30 小时成功的定时运行：$ok 次"
-          if [ "$ok" -gt 0 ]; then
+          run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/daily.yml/runs?per_page=40" \
+            --jq "[.workflow_runs[] | select((.event == \"schedule\" or .event == \"repository_dispatch\") and .conclusion == \"success\" and .created_at > \"$since\")] | sort_by(.created_at) | last | .id // empty")
+
+          built=0
+          if [ -n "$run_id" ]; then
+            built=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs" \
+              --jq "[.jobs[].steps[] | select(.name == \"Build the brief\" and .conclusion == \"success\")] | length")
+            echo "最近一次成功运行：$run_id，其中构建成功 $built 次"
+          else
+            echo "近 30 小时没有任何定时/外部触发的成功运行"
+          fi
+
+          if [ "$built" -gt 0 ]; then
             echo "今天没问题。"
             exit 0
           fi
 
-          echo "没有成功的定时运行，发告警。"
+          echo "没有真的生成简报，发告警。"
           key="${BARK_URL%/}"
           key="${key##*/}"
           curl -sS -X POST "${BARK_URL%/}/push" \
             -H 'Content-Type: application/json' \
-            -d "{\"device_key\":\"${key}\",\"title\":\"今天的简报没生成\",\"body\":\"近 30 小时没有成功的定时运行，去 Actions 页面看看。\",\"group\":\"运维告警\",\"level\":\"timeSensitive\",\"url\":\"https://github.com/${GITHUB_REPOSITORY}/actions\"}"
+            -d "{\"device_key\":\"${key}\",\"title\":\"今天的简报没生成\",\"body\":\"近 30 小时没有成功构建的简报，去 Actions 页面看看。\",\"group\":\"运维告警\",\"level\":\"timeSensitive\",\"url\":\"https://github.com/${GITHUB_REPOSITORY}/actions\"}"

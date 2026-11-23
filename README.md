@@ -69,9 +69,9 @@ python -m newsbrief --resend output\brief-2026-11-21.json
 三个必须知道的坑：
 
 - **cron 用 UTC**，且 GitHub 的定时触发**不守时**。实测过：排期 01:13 UTC 的任务，
-  实际 07:59 UTC 才跑（晚了 6 小时 46 分）；排期 23:03 / 23:33 的两个任务，
-  连续两天跑出 **0 条记录**——不是晚点，是被调度器直接丢了。
-  所以这里排了三个点互相兜底，并且支持被外部定时器踢（见下一节）。
+  实际 07:59 UTC 才跑（晚了 **6 小时 46 分**）；排期 23:33 UTC 的任务，
+  次日 03:29 UTC 才跑（晚了 **3 小时 56 分**）。也就是说这套调度根本卡不准 07:00，
+  只能当兜底。真正的准点投递靠下面两种外部触发。
 - **别把定时排在整点**。GitHub 文档写明"高负载时段包括每个小时的开始"，整点排队的定时
   任务有概率被直接丢弃，连一条运行记录都不留。
 - **公开仓库连续 60 天没有提交活动**，GitHub 会停掉定时任务，记得偶尔提交一次。
@@ -80,17 +80,31 @@ python -m newsbrief --resend output\brief-2026-11-21.json
 
 ### 外部定时器：让投递时间真的准
 
-GitHub 自己的 cron 靠不住时，用任意外部定时器在 07:00 POST 一次
-`repository_dispatch`，工作流照常跑（`on.repository_dispatch.types` 已声明 `[daily]`）。
-它和 schedule 共用同一个"今天投递过没有"的判断，不会重复发。
+GitHub 自己的 cron 会晚几个小时，所以真正的 07:00 交给外部触发。
+工作流已经声明了 `on.repository_dispatch.types: [daily]`，任何能在 07:00 POST 一次的工具都行。
+它和 schedule 共用同一个"今天投递过没有"的判断，所以两条路都开着也不会重复发。
 
-以 [cron-job.org](https://cron-job.org)（免费）为例：
+**方式一：本机 Windows 计划任务**（已配置好，无需再操作）
+
+`tools/trigger.ps1` 会查 `api.github.com` 的真实 IP、用 `curl --resolve` 绕开本机 hosts
+的劫持，然后 POST 一次 `repository_dispatch`。日志在 `output/trigger.log`。
+
+```
+schtasks /Query /TN "NewsPushDailyTrigger"     # 看状态
+schtasks /Run   /TN "NewsPushDailyTrigger"     # 立刻手动踢一次
+schtasks /Delete /TN "NewsPushDailyTrigger" /F # 不想要了就删掉
+```
+
+注意它是 **Interactive only**：电脑没开、或没登录，这一步不会执行——那种情况就退回到
+GitHub 的定时兜底（可能晚几个小时才到）。
+
+**方式二：cron-job.org（免费，24×7，不依赖本机开机）**
 
 1. 建一个 job，URL 填
    `https://api.github.com/repos/fffrogson/NewsPush/dispatches`
 2. Method 选 `POST`，Headers 加
    `Authorization: Bearer <你自己的 PAT>`、`Accept: application/vnd.github+json`
-   （PAT 需要 **Contents: write** 权限；fine-grained token 只勾这一个仓库的 Contents 就够了）
+   （PAT 需要 **Contents: write**；fine-grained token 只勾这一个仓库的 Contents 就够）
 3. Request body 填 `{"event_type":"daily"}`
 4. 时间选每天 07:00、时区 Asia/Shanghai
 
@@ -100,15 +114,17 @@ GitHub 自己的 cron 靠不住时，用任意外部定时器在 07:00 POST 一�
 ### 某天没收到简报怎么办
 
 定时任务失败是**静默**的：不会有人发邮件告诉你。所以配了 `healthcheck.yml` 当哨兵——
-每天北京 09:13 检查"最近 30 小时有没有成功的定时运行"，没有就用 Bark 推一条
-「今天的简报没生成」。收到这条告警就去 [Actions](https://github.com/fffrogson/NewsPush/actions)
-看那天的日志。
+每天北京 09:13 回看 30 小时，如果找不到一次"真的把 `Build the brief` 跑完"的
+定时/外部触发运行，就用 Bark 推一条「今天的简报没生成」。
+（只数"运行成功"不够：被 guard 跳过的那次也是 success，所以它还要再看那次的步骤。）
+收到告警就去 [Actions](https://github.com/fffrogson/NewsPush/actions) 看当天的日志。
 
 排查顺序：
 
 1. Actions 页面有没有那天的运行记录？
-   - **完全没有** → 是调度没触发（整点丢任务 / workflow 被停用）。点一次 Run workflow 先拿到当天的简报，
-     然后去 Settings → Actions 确认工作流没有被 disabled。
+   - **完全没有** → 两种触发都没生效。先看 `output/trigger.log` 有没有 07:00 那条 204；
+     再去 Settings → Actions 确认工作流没被 disabled。
+   - **有但被跳过** → guard 认为今天已经投递过，翻前一条运行看是不是已经发过了。
    - **有但失败** → 看失败那步的日志，常见是 key 过期、SMTP 授权码失效。
 2. 只有 Bark 没收到、邮件正常 → 检查 `BARK_URL` 里的 key 是否还有效。
 3. 邮件进了垃圾箱 → 见下面「为什么邮件会被判垃圾」。
