@@ -55,8 +55,11 @@ jobs:
         run: |
           set -euo pipefail
           local_day=$(TZ=Asia/Shanghai date +%Y-%m-%d)
-          # 注意：date 同时给 -d 和 -u 时会把输入当成 UTC，必须把时区写进日期串里
-          since=$(date -u -d "$local_day 00:00:00 Asia/Shanghai" +%Y-%m-%dT%H:%M:%SZ)
+          # 注意：date 同时给 -d 和 -u 时会把输入当成 UTC；
+          # 而 -d "… Asia/Shanghai" 这种带时区名的写法 GNU date 不认。
+          # 所以先在目标时区算出 epoch，再转成 UTC 字符串。
+          epoch=$(TZ=Asia/Shanghai date -d "$local_day 00:00" +%s)
+          since=$(date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ)
           echo "北京日期 $local_day，窗口起点 $since"
           n=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/daily.yml/runs?per_page=40" \
               --jq "[.workflow_runs[] | select((.event == \"schedule\" or .event == \"repository_dispatch\") and .conclusion == \"success\" and .created_at >= \"$since\")] | length")
