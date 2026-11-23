@@ -62,17 +62,40 @@ python -m newsbrief --resend output\brief-2026-11-21.json
    （QQ 邮箱的 `SMTP_PASS` 是 **16 位授权码**：设置 → 账户 → 开启 SMTP → 生成授权码。
    Outlook 邮箱先开两步验证，再用"应用密码"当 `SMTP_PASS`，`smtp_host: smtp-mail.outlook.com`、`smtp_port: 587`。）
 3. **Actions** 里手动跑一次（勾 `dry_run`），确认产物没问题。
-4. 之后每天 UTC 23:03（北京 07:03）自动跑，产物（HTML/TXT/JSON）作为 artifact 保留 14 天。
+4. 之后每天北京 07:07 起，按 `7 23` → `37 23` → `7 0`（UTC）三个点依次尝试，
+   第一个跑成功就投递，后面两个直接被 `Already delivered today?` 跳过。
+   产物（HTML/TXT/JSON）作为 artifact 保留 14 天。
 
 三个必须知道的坑：
 
-- **cron 用 UTC**，且 GitHub 的定时触发**常延迟 5–30 分钟**。要卡准 07:00，用一台常开的机器
-  （小主机 / VPS / 路由器）跑 crontab，或云函数定时触发器。
-- **别把定时排在整点**。GitHub 文档写明"高负载时段包括每个小时的开始"，整点排队的定时任务
-  有概率被**直接丢弃**——不是晚几分钟，是连一条运行记录都不留下。所以这里用的是
-  `3 23` 和 `33 23` 两个点：第二个只在第一个没成功时才真的干活（见 workflow 里的
-  `Already delivered today?` 步骤）。
+- **cron 用 UTC**，且 GitHub 的定时触发**不守时**。实测过：排期 01:13 UTC 的任务，
+  实际 07:59 UTC 才跑（晚了 6 小时 46 分）；排期 23:03 / 23:33 的两个任务，
+  连续两天跑出 **0 条记录**——不是晚点，是被调度器直接丢了。
+  所以这里排了三个点互相兜底，并且支持被外部定时器踢（见下一节）。
+- **别把定时排在整点**。GitHub 文档写明"高负载时段包括每个小时的开始"，整点排队的定时
+  任务有概率被直接丢弃，连一条运行记录都不留。
 - **公开仓库连续 60 天没有提交活动**，GitHub 会停掉定时任务，记得偶尔提交一次。
+  （私有仓库不受这条限制，代价是走每月 2,000 分钟的额度；单次约 2.2 分钟，
+  跑满 30 天约 70 分钟，占 3.5%。）
+
+### 外部定时器：让投递时间真的准
+
+GitHub 自己的 cron 靠不住时，用任意外部定时器在 07:00 POST 一次
+`repository_dispatch`，工作流照常跑（`on.repository_dispatch.types` 已声明 `[daily]`）。
+它和 schedule 共用同一个"今天投递过没有"的判断，不会重复发。
+
+以 [cron-job.org](https://cron-job.org)（免费）为例：
+
+1. 建一个 job，URL 填
+   `https://api.github.com/repos/fffrogson/NewsPush/dispatches`
+2. Method 选 `POST`，Headers 加
+   `Authorization: Bearer <你自己的 PAT>`、`Accept: application/vnd.github+json`
+   （PAT 需要 **Contents: write** 权限；fine-grained token 只勾这一个仓库的 Contents 就够了）
+3. Request body 填 `{"event_type":"daily"}`
+4. 时间选每天 07:00、时区 Asia/Shanghai
+
+想先干跑（只生成不发送）就把 body 换成
+`{"event_type":"daily","client_payload":{"dry_run":true}}`。
 
 ### 某天没收到简报怎么办
 
