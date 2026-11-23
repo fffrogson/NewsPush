@@ -43,6 +43,10 @@ jobs:
     steps:
       # 定时触发（schedule）和外部触发（repository_dispatch）都要先看今天投递过没有，
       # 避免重复发邮件、重复推送。手动触发不受限制，永远照常执行。
+      #
+      # 窗口按"北京时间的自然日"算，不是按"最近 N 小时"：
+      # 07:00 的投递在 UTC 是前一天 23:00，用 20 小时窗口会把今天上午那次
+      # 晚到的投递算进来，导致第二天早上被误判成"已经发过了"。
       - name: Already delivered today?
         id: guard
         if: github.event_name == 'schedule' || github.event_name == 'repository_dispatch'
@@ -50,10 +54,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          since=$(date -u -d '20 hours ago' +%Y-%m-%dT%H:%M:%SZ)
-          n=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/daily.yml/runs?per_page=30" \
-              --jq "[.workflow_runs[] | select((.event == \"schedule\" or .event == \"repository_dispatch\") and .conclusion == \"success\" and .created_at > \"$since\")] | length")
-          echo "近 20 小时已成功投递：$n 次"
+          local_day=$(TZ=Asia/Shanghai date +%Y-%m-%d)
+          since=$(TZ=Asia/Shanghai date -d "$local_day 00:00" -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "北京日期 $local_day，窗口起点 $since"
+          n=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/daily.yml/runs?per_page=40" \
+              --jq "[.workflow_runs[] | select((.event == \"schedule\" or .event == \"repository_dispatch\") and .conclusion == \"success\" and .created_at >= \"$since\")] | length")
+          echo "今天已成功投递：$n 次"
           if [ "$n" -gt 0 ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
