@@ -116,9 +116,22 @@ python -m newsbrief --resend output\brief-2026-11-21.json
 ### 某天没收到简报怎么办
 
 定时任务失败是**静默**的：不会有人发邮件告诉你。所以配了 `healthcheck.yml` 当哨兵——
-每天北京 09:13 回看 30 小时，如果找不到一次"真的把 `Build the brief` 跑完"的
-运行，就用 Bark 推一条「今天的简报没生成」。
-（只数"运行成功"不够：被 guard 跳过的那次也是 success，所以它还要再看那次的步骤。）
+每天检查**北京自然日**内有没有一次"真的把 `Build the brief` 跑完"的运行，没有就推一条
+「今天的简报没生成」。
+
+判定有三条硬规矩，都是踩坑换来的：
+
+1. **不能只数"运行成功"**——被 guard 跳过的重复触发也是 success，所以要逐条去看那次的步骤。
+2. **不能只看"最近一条成功运行"**——重复触发（guard 跳过）常常排在真正投递之后，
+   取最后一条就会天天误报"没生成"。现在是按时间顺序逐条查，查到任意一条构建成功就放行。
+3. **窗口按北京自然日算**，不是"最近 N 小时"——这个 workflow 自己的 cron 会被 GitHub
+   拖到下午甚至晚上才跑，用小时窗口会横跨两天，把昨天的成功当成今天的。
+
+想立刻验一次（不等到 cron）：POST 一次
+`https://api.github.com/repos/fffrogson/NewsPush/dispatches`，
+body 为 `{"event_type":"healthcheck","client_payload":{"dry_run":true}}`，
+`dry_run` 时只打印判断结果、不发告警。
+
 收到告警就去 [Actions](https://github.com/fffrogson/NewsPush/actions) 看当天的日志。
 
 排查顺序：
